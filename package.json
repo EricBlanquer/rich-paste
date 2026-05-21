@@ -1,0 +1,82 @@
+{
+  "name": "rich-paste",
+  "displayName": "Markdown Rich Paste",
+  "description": "Smart paste for Linux: when clipboard contains HTML with embedded images (data URIs) or a raw image, extract the images as files next to the document and insert markdown with text and image links.",
+  "version": "0.1.6",
+  "publisher": "eric-blanquer",
+  "license": "MIT",
+  "author": {
+    "name": "Eric Blanquer"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/EricBlanquer/rich-paste.git"
+  },
+  "homepage": "https://github.com/EricBlanquer/rich-paste#readme",
+  "bugs": {
+    "url": "https://github.com/EricBlanquer/rich-paste/issues"
+  },
+  "keywords": [
+    "paste",
+    "clipboard",
+    "image",
+    "markdown",
+    "teams",
+    "linux",
+    "data uri",
+    "screenshot"
+  ],
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": [
+    "Other",
+    "Formatters"
+  ],
+  "icon": "icon.png",
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "richPaste.smartPaste",
+        "title": "Rich Paste: Smart paste"
+      }
+    ],
+    "keybindings": [
+      {
+        "key": "ctrl+v",
+        "command": "richPaste.smartPaste",
+        "when": "editorTextFocus && !editorReadonly"
+      }
+    ],
+    "configuration": {
+      "title": "Rich Paste",
+      "properties": {
+        "richPaste.attachmentsSubdir": {
+          "type": "string",
+          "default": "attachments",
+          "description": "Subdirectory (relative to the current document) where pasted images are saved."
+        },
+        "richPaste.useDocumentSubfolder": {
+          "type": "boolean",
+          "default": true,
+          "description": "Create a sub-folder named after the current document inside attachmentsSubdir."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "npx --yes @vscode/vsce package",
+    "publish": "npx --yes @vscode/vsce publish"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.80.0",
+    "typescript": "^5.4.0"
+  }
+}
