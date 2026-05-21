@@ -85,6 +85,7 @@ function extractImages(html: string): { images: ExtractedImage[]; htmlMatches: s
 function timestamp(): string {
   const d = new Date();
   const pad = (n: number) => String(n).padStart(2, "0");
+  const pad3 = (n: number) => String(n).padStart(3, "0");
   return (
     d.getFullYear() +
     pad(d.getMonth() + 1) +
@@ -92,7 +93,8 @@ function timestamp(): string {
     "-" +
     pad(d.getHours()) +
     pad(d.getMinutes()) +
-    pad(d.getSeconds())
+    pad(d.getSeconds()) +
+    pad3(d.getMilliseconds())
   );
 }
 
@@ -137,36 +139,56 @@ function htmlToPlainTextLines(html: string): string {
   return s;
 }
 
+async function cleanupFiles(files: string[]): Promise<void> {
+  for (const f of files) {
+    try {
+      await fs.unlink(f);
+    } catch {}
+  }
+}
+
 async function buildMarkdownPaste(
   doc: vscode.TextDocument,
   html: string,
   fallbackText: string
-): Promise<string | null> {
-  const { images, htmlMatches } = extractImages(html);
+): Promise<{ text: string; writtenFiles: string[] } | null> {
+  const { images } = extractImages(html);
   if (images.length === 0) return null;
 
   const attachmentsDir = await resolveAttachmentsDir(doc);
   const docBase = path.basename(doc.uri.fsPath, path.extname(doc.uri.fsPath));
   const ts = timestamp();
 
+  const writtenFiles: string[] = [];
   let workingHtml = html;
   const replacements: Array<{ fullMatch: string; markdown: string }> = [];
-  for (let i = 0; i < images.length; i++) {
-    const img = images[i];
-    const filename = `${docBase}-${ts}-${i + 1}.${img.ext}`;
-    const filePath = path.join(attachmentsDir, filename);
-    await fs.writeFile(filePath, img.buffer);
-    const rel = relForMarkdown(doc.uri.fsPath, filePath);
-    const markdown = `\n\n![](${rel})\n\n`;
-    replacements.push({ fullMatch: img.fullMatch, markdown });
+  try {
+    for (let i = 0; i < images.length; i++) {
+      const img = images[i];
+      const filename = `${docBase}-${ts}-${i + 1}.${img.ext}`;
+      const filePath = path.join(attachmentsDir, filename);
+      await fs.writeFile(filePath, img.buffer);
+      writtenFiles.push(filePath);
+      const rel = relForMarkdown(doc.uri.fsPath, filePath);
+      const markdown = `\n\n![](${rel})\n\n`;
+      replacements.push({ fullMatch: img.fullMatch, markdown });
+    }
+  } catch (err) {
+    await cleanupFiles(writtenFiles);
+    throw err;
   }
   for (const { fullMatch, markdown } of replacements) {
     workingHtml = workingHtml.replace(fullMatch, `\n${markdown}\n`);
   }
 
   const text = htmlToPlainTextLines(workingHtml);
-  if (text.trim().length > 0) return text;
-  return fallbackText.trim().length > 0 ? fallbackText : null;
+  const finalText =
+    text.trim().length > 0 ? text : fallbackText.trim().length > 0 ? fallbackText : null;
+  if (finalText === null) {
+    await cleanupFiles(writtenFiles);
+    return null;
+  }
+  return { text: finalText, writtenFiles };
 }
 
 async function promptSaveUntitled(
@@ -187,8 +209,15 @@ async function promptSaveUntitled(
   const content = editor.document.getText();
   await fs.writeFile(targetUri.fsPath, content);
 
+  const viewColumn = editor.viewColumn;
+  const untitledUri = editor.document.uri.toString();
+  const active = vscode.window.activeTextEditor;
+  if (active && active.document.uri.toString() === untitledUri) {
+    await vscode.commands.executeCommand("workbench.action.revertAndCloseActiveEditor");
+  }
+
   const newDoc = await vscode.workspace.openTextDocument(targetUri);
-  const newEditor = await vscode.window.showTextDocument(newDoc, editor.viewColumn);
+  const newEditor = await vscode.window.showTextDocument(newDoc, viewColumn);
   return newEditor;
 }
 
@@ -204,12 +233,19 @@ async function pasteImageOnly(editor: vscode.TextEditor, buffer: Buffer): Promis
   const rel = relForMarkdown(editor.document.uri.fsPath, filePath);
   const markdown = `![](${rel})`;
 
-  await editor.edit((editBuilder) => {
-    for (const selection of editor.selections) {
-      if (selection.isEmpty) editBuilder.insert(selection.active, markdown);
-      else editBuilder.replace(selection, markdown);
-    }
-  });
+  let applied = false;
+  try {
+    applied = await editor.edit((editBuilder) => {
+      for (const selection of editor.selections) {
+        if (selection.isEmpty) editBuilder.insert(selection.active, markdown);
+        else editBuilder.replace(selection, markdown);
+      }
+    });
+  } catch (err) {
+    await cleanupFiles([filePath]);
+    throw err;
+  }
+  if (!applied) await cleanupFiles([filePath]);
 }
 
 async function smartPaste(): Promise<void> {
@@ -240,7 +276,7 @@ async function smartPaste(): Promise<void> {
   }
 
   const isMd = isMarkdownDocument(editor.document) || editor.document.isUntitled;
-  const wantSmart = hasDataUri || (hasImage && isMd);
+  const wantSmart = isMd && (hasDataUri || hasImage);
 
   if (!wantSmart) {
     await vscode.commands.executeCommand("editor.action.clipboardPasteAction");
@@ -256,17 +292,24 @@ async function smartPaste(): Promise<void> {
   try {
     if (hasDataUri && html) {
       const fallbackText = await vscode.env.clipboard.readText();
-      const markdown = await buildMarkdownPaste(editor.document, html, fallbackText);
-      if (!markdown) {
+      const result = await buildMarkdownPaste(editor.document, html, fallbackText);
+      if (!result) {
         await vscode.commands.executeCommand("editor.action.clipboardPasteAction");
         return;
       }
-      await editor.edit((editBuilder) => {
-        for (const selection of editor!.selections) {
-          if (selection.isEmpty) editBuilder.insert(selection.active, markdown);
-          else editBuilder.replace(selection, markdown);
-        }
-      });
+      let applied = false;
+      try {
+        applied = await editor.edit((editBuilder) => {
+          for (const selection of editor!.selections) {
+            if (selection.isEmpty) editBuilder.insert(selection.active, result.text);
+            else editBuilder.replace(selection, result.text);
+          }
+        });
+      } catch (err) {
+        await cleanupFiles(result.writtenFiles);
+        throw err;
+      }
+      if (!applied) await cleanupFiles(result.writtenFiles);
       return;
     }
 

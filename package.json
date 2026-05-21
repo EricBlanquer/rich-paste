@@ -2,7 +2,7 @@
   "name": "rich-paste",
   "displayName": "Markdown Rich Paste",
   "description": "Smart paste for Linux: when clipboard contains HTML with embedded images (data URIs) or a raw image, extract the images as files next to the document and insert markdown with text and image links.",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "publisher": "eric-blanquer",
   "license": "MIT",
   "author": {
@@ -49,7 +49,7 @@
       {
         "key": "ctrl+v",
         "command": "richPaste.smartPaste",
-        "when": "editorTextFocus && !editorReadonly"
+        "when": "editorTextFocus && !editorReadonly && editorLangId == markdown"
       }
     ],
     "configuration": {
